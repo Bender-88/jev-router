@@ -1,0 +1,53 @@
+{
+  "name": "jev-router",
+  "version": "0.1.0",
+  "author": { "name": "Bender-88" },
+  "license": "MIT",
+  "description": "Routes each task, and every subagent, to a model tier using TypeSafe's Jev.",
+  "userConfig": {
+    "apiKey": {
+      "type": "string",
+      "title": "TypeSafe API key",
+      "description": "Bearer key for api.typesafe.ai. Without it the mod does nothing.",
+      "sensitive": true,
+      "required": false,
+      "default": ""
+    },
+    "trivialModel": {
+      "type": "string",
+      "title": "Model for trivial tasks",
+      "description": "Lookups, searches, listing, simple edits.",
+      "default": "haiku"
+    },
+    "standardModel": {
+      "type": "string",
+      "title": "Model for standard tasks",
+      "description": "Normal implementation, review, debugging.",
+      "default": "sonnet"
+    },
+    "hardModel": {
+      "type": "string",
+      "title": "Model for hard tasks",
+      "description": "Architecture, tricky debugging, multi-file reasoning.",
+      "default": "opus"
+    },
+    "minConfidence": {
+      "type": "number",
+      "title": "Minimum Jev confidence",
+      "description": "Below this, the default model is kept.",
+      "default": 0.5
+    },
+    "timeoutMs": {
+      "type": "number",
+      "title": "Jev timeout (ms)",
+      "description": "Past this, routing is skipped.",
+      "default": 4000
+    },
+    "showMain": {
+      "type": "boolean",
+      "title": "Show suggestion for main prompts",
+      "description": "Display Jev's pick in the status line for each prompt you submit.",
+      "default": true
+    }
+  }
+}

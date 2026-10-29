@@ -1,0 +1,113 @@
+import { expect, test } from 'claude-code/testing'
+
+const KEY = { apiKey: 'test-key' }
+
+const jev = (choice: string, confidence: number) => ({
+  value: {
+    status: 200,
+    ok: true,
+    headers: {},
+    text: JSON.stringify({ answers: { tier: { type: 'choice', choice, confidence, probabilities: {} } } }),
+  },
+})
+
+const spawn = (subagentType = 'general-purpose', model?: string) => ({
+  tool_use_id: 't1',
+  prompt: 'Find every call site of fooBar',
+  description: 'Find call sites',
+  subagentType,
+  provider: { plugin: 'engine', tier: 'core' },
+  parentModel: 'sonnet',
+  model,
+})
+
+test('a subagent is given the model Jev picks', { options: KEY }, async ($, on) => {
+  on('http.fetch', () => jev('trivial', 0.9))
+  on('clock.sleep', () => new Promise(() => {}))
+  on('ui.status', () => ({ value: undefined }))
+  const seen: (string | undefined)[] = []
+  on('agent.spawn', (_, e) => {
+    seen.push(e.model)
+    return { model: e.model ?? 'sonnet' }
+  })
+
+  await $.agent.spawn({ prompt: 'Find every call site of fooBar', description: 'Find call sites' })
+
+  expect(seen).toEqual(['haiku'])
+})
+
+test('low confidence keeps the default model', { options: KEY }, async ($, on) => {
+  on('http.fetch', () => jev('hard', 0.2))
+  on('clock.sleep', () => new Promise(() => {}))
+  const seen: (string | undefined)[] = []
+  on('agent.spawn', (_, e) => {
+    seen.push(e.model)
+    return { model: 'sonnet' }
+  })
+
+  await $.agent.spawn({ prompt: 'x', description: 'y' })
+
+  expect(seen).toEqual([undefined])
+})
+
+test('an API failure keeps the default model', { options: KEY }, async ($, on) => {
+  on('http.fetch', () => ({ value: { status: 500, ok: false, headers: {}, text: '' } }))
+  on('clock.sleep', () => new Promise(() => {}))
+  const seen: (string | undefined)[] = []
+  on('agent.spawn', (_, e) => {
+    seen.push(e.model)
+    return { model: 'sonnet' }
+  })
+
+  await $.agent.spawn({ prompt: 'x', description: 'y' })
+
+  expect(seen).toEqual([undefined])
+})
+
+test('no key means no call and no change', async ($, on) => {
+  let calls = 0
+  on('http.fetch', () => {
+    calls++
+    return jev('hard', 1)
+  })
+  const seen: (string | undefined)[] = []
+  on('agent.spawn', (_, e) => {
+    seen.push(e.model)
+    return { model: 'sonnet' }
+  })
+
+  await $.agent.spawn({ prompt: 'x', description: 'y' })
+
+  expect(calls).toBe(0)
+  expect(seen).toEqual([undefined])
+})
+
+test('the key is read from TYPESAFE_API_KEY', async ($, on) => {
+  on('env.get', () => ({ value: 'env-key' }))
+  const auth: (string | undefined)[] = []
+  on('http.fetch', (_, e) => {
+    auth.push(e.init?.headers?.authorization)
+    return jev('trivial', 0.9)
+  })
+  on('clock.sleep', () => new Promise(() => {}))
+  on('ui.status', () => ({ value: undefined }))
+  on('agent.spawn', (_, e) => ({ model: e.model ?? 'sonnet' }))
+
+  await $.agent.spawn({ prompt: 'x', description: 'y' })
+
+  expect(auth).toEqual(['Bearer env-key'])
+})
+
+test('a fork is never routed', { options: KEY }, async ($, on) => {
+  let calls = 0
+  on('http.fetch', () => {
+    calls++
+    return jev('hard', 1)
+  })
+  on('clock.sleep', () => new Promise(() => {}))
+  on('agent.spawn', () => ({ model: 'sonnet' }))
+
+  await $.agent.spawn({ prompt: 'x', description: 'y', subagentType: 'fork' })
+
+  expect(calls).toBe(0)
+})

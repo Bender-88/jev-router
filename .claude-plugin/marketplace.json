@@ -1,0 +1,5 @@
+{
+  "name": "jev-router",
+  "owner": { "name": "Bender-88" },
+  "plugins": [{ "name": "jev-router", "source": "./" }]
+}
