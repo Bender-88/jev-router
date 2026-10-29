@@ -111,3 +111,42 @@ test('a fork is never routed', { options: KEY }, async ($, on) => {
 
   expect(calls).toBe(0)
 })
+
+test('a routed subagent adds its saving to the band', { options: KEY }, async ($, on) => {
+  on('http.fetch', () => jev('trivial', 0.9))
+  on('clock.sleep', () => new Promise(() => {}))
+  on('session.model', () => ({ value: 'claude-sonnet-5-5' }))
+  on('agent.spawn', (_, e) => ({ model: e.model ?? 'sonnet', agentId: 'a1' }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+
+  // parentModel is sonnet ($3/$15), the subagent ran on haiku ($1/$5): 1M in + 1M out saves $2 + $10.
+  await $.agent.spawn({ prompt: 'x', description: 'y' })
+  await $.turn.complete({
+    answer: 'done',
+    durationMs: 1,
+    isAborted: false,
+    turnId: 't1',
+    reason: 'answer',
+    agentId: 'a1',
+    usage: {
+      model: 'claude-haiku-5-5',
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    },
+  })
+
+  const ui = await $.ui.mount({
+    plugin: 'jev-router',
+    surface: 'desktop',
+    component: 'AbovePrompt',
+    requestId: 'band',
+    props: { hasSurvey: false },
+  })
+
+  const line = await ui.find({ type: 'Text', text: /Jev/ })
+  expect(line?.text).toContain('this prompt: saved ~$12.00')
+  expect(line?.text).toContain('session: saved ~$12.00')
+  await ui.unmount()
+})

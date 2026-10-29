@@ -1,7 +1,9 @@
 {
   "name": "jev-router",
   "version": "0.1.0",
-  "author": { "name": "Bender-88" },
+  "author": {
+    "name": "Bender-88"
+  },
   "license": "MIT",
   "description": "Routes each task, and every subagent, to a model tier using TypeSafe's Jev.",
   "userConfig": {
@@ -46,8 +48,15 @@
     "showMain": {
       "type": "boolean",
       "title": "Show suggestion for main prompts",
-      "description": "Display Jev's pick in the status line for each prompt you submit.",
+      "description": "Display Jev's pick in the purple line above the prompt for each prompt you submit.",
       "default": true
+    },
+    "prices": {
+      "type": "string",
+      "title": "Model prices (USD per million tokens)",
+      "description": "JSON of [input, output] per model family, used to estimate savings. Estimates only.",
+      "default": "{\"haiku\":[1,5],\"sonnet\":[3,15],\"opus\":[5,25]}"
     }
-  }
+  },
+  "types": "./types/index.d.ts"
 }
