@@ -5,11 +5,11 @@ A Claude Code mod that uses [TypeSafe](https://typesafe.ai)'s Jev model to pick 
 ## What it does
 
 - **Subagents:** before a subagent starts, Jev classifies its task as `trivial`, `standard` or `hard`. The mod sets the subagent's model to haiku, sonnet or opus accordingly.
-- **Purple line above the prompt:** shows Jev's latest decision plus an estimate of what routing saved, for the current prompt and for the whole session, for example `Jev → haiku (trivial, 0.88) for "…" · this prompt: saved ~$0.0123 · session: saved ~$0.3100`. It has a Hide button.
-- **How savings are estimated:** when a routed subagent finishes, its tokens are priced at the model it ran on and at your session's own model, and the difference is the saving. Cache reads and writes are estimated at 10% and 125% of the input price. These are rough figures based on the `prices` option, not billing data, and they say nothing about answer quality. The main conversation and forks are never routed, so they add no savings.
+- **Pink band above the prompt:** a rounded box in TypeSafe pink with a `◈ JEV` mark, Jev's latest decision (tier, model, confidence), the task with the route (for example `sonnet → haiku`), and an estimate of what routing saved, for the current prompt and for the whole session, for example `this prompt: saved ~$0.21 · session: saved ~$1.30`. Amounts show 2 decimals. It has a Hide button.
+- **How savings are estimated:** when a routed subagent finishes, its tokens are priced at the model it ran on and at your session's own model, and the difference is the saving. Cache reads and writes are estimated at 10% and 125% of the input price. These are rough figures based on the `prices` option, not billing data, and they say nothing about answer quality. Forks are never routed, so they add no savings. Main-conversation turns are folded into the same totals as an estimate: their tokens are priced at the model they ran on and at the model Jev suggested for that prompt. The main model is not actually switched, so that part is what you could have saved, not money saved, and it assumes the cheaper model would use the same tokens.
 - **Forks:** never routed. A fork always inherits its parent's model.
 - **Explicit models:** a subagent that already names a model is left alone.
-- **Main conversation:** the engine gives a mod no way to switch the main session's model, so the mod only shows "Jev suggests ..." in the purple line for each prompt. Turn this off with the `showMain` option.
+- **Main conversation:** the engine gives a mod no way to switch the main session's model, so the mod only shows Jev's suggestion in the pink band for each prompt. Turn this off with the `showMain` option.
 - **Fallbacks:** if Jev is unsure (confidence below `minConfidence`, default 0.5), the API errors, the call times out (`timeoutMs`, default 4000), or no key is set, the default model is kept. A Jev failure never blocks a spawn.
 
 ## Install
@@ -52,7 +52,7 @@ You can instead fill in the `apiKey` option in the mod's config. If both are set
 | `hardModel` | `opus` | Model for hard tasks |
 | `minConfidence` | `0.5` | Below this Jev confidence, the default model is kept |
 | `timeoutMs` | `4000` | Give up on Jev after this many milliseconds |
-| `showMain` | `true` | Show Jev's suggestion in the purple line for main prompts |
+| `showMain` | `true` | Show Jev's suggestion in the pink band for main prompts |
 | `prices` | `{"haiku":[1,5],"sonnet":[3,15],"opus":[5,25]}` | JSON of `[input, output]` USD per million tokens per model family, used for the savings estimate. The defaults are estimates; check current pricing |
 
 ## How it works

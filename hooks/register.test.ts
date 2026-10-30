@@ -145,8 +145,45 @@ test('a routed subagent adds its saving to the band', { options: KEY }, async ($
     props: { hasSurvey: false },
   })
 
-  const line = await ui.find({ type: 'Text', text: /Jev/ })
+  const line = await ui.find({ type: 'Text', text: /this prompt/ })
   expect(line?.text).toContain('this prompt: saved ~$12.00')
   expect(line?.text).toContain('session: saved ~$12.00')
+  await ui.unmount()
+})
+
+test('a main turn is priced against the model Jev suggests', { options: KEY }, async ($, on) => {
+  on('http.fetch', () => jev('trivial', 0.9))
+  on('clock.sleep', () => new Promise(() => {}))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  on('ui.status', () => ({ value: undefined }))
+
+  // The session ran on sonnet ($3/$15); Jev suggests haiku ($1/$5): 1M in + 1M out is $12 cheaper.
+  await $.prompt.submit({ text: 'Rename a variable' })
+  await $.turn.complete({
+    answer: 'done',
+    durationMs: 1,
+    isAborted: false,
+    turnId: 't2',
+    reason: 'answer',
+    usage: {
+      model: 'claude-sonnet-5-5',
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    },
+  })
+
+  const ui = await $.ui.mount({
+    plugin: 'jev-router',
+    surface: 'desktop',
+    component: 'AbovePrompt',
+    requestId: 'band2',
+    props: { hasSurvey: false },
+  })
+
+  const line = await ui.find({ type: 'Text', text: /this prompt/ })
+  expect(line?.text).toContain('this prompt: saved ~$12.00')
   await ui.unmount()
 })
