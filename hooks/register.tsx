@@ -31,6 +31,19 @@ const routed = atom({ plugin: 'jev-router', key: 'routed' } as const, {})
 // The model Jev suggested for the current main prompt; its turns are priced against it.
 const mainPick = atom({ plugin: 'jev-router', key: 'mainPick' } as const, null)
 const isHidden = atom({ plugin: 'jev-router', key: 'isHidden' } as const, false)
+// The main turn in progress: the model its steps run on, and the session's own model it was weighed against.
+const mainTurn = atom({ plugin: 'jev-router', key: 'mainTurn' } as const, null)
+// The last main request: the model that answered, its context size in tokens, and when it ended. Whose cache is warm.
+const lastMain = atom({ plugin: 'jev-router', key: 'lastMain' } as const, null)
+// Running averages of a main turn's requests and output tokens, to estimate what the next turn will cost.
+const turnShape = atom({ plugin: 'jev-router', key: 'turnShape' } as const, { steps: 3, output: 1000 })
+
+// Cache reads and writes as a share of the input price.
+const CACHE_READ = 0.1
+const CACHE_WRITE = 1.25
+// A switch must beat staying by this share of the cost of staying, so estimate noise never flips the model.
+const MARGIN = 0.1
+const RANK: Record<string, number> = { haiku: 0, sonnet: 1, opus: 2 }
 
 type Usage = {
   input_tokens: number
@@ -60,6 +73,20 @@ function cost(prices: Prices, model: string, u: Usage): number | undefined {
       u.cache_creation_input_tokens * input * 1.25) /
     million
   )
+}
+
+type Shape = { steps: number; output: number }
+
+// What one main turn on `model` is expected to cost: its first request reads the context from cache when that
+// model's cache is warm and writes it afresh when not, each later request reads it from cache, and the output is
+// the usual amount. Undefined for a model with no price.
+function turnCost(prices: Prices, model: string, context: number, isWarm: boolean, shape: Shape): number | undefined {
+  const family = Object.keys(prices).find(f => model.includes(f))
+  if (family === undefined) return undefined
+  const [input, output] = prices[family]!
+  const first = context * input * (isWarm ? CACHE_READ : CACHE_WRITE)
+  const rest = Math.max(shape.steps - 1, 0) * context * input * CACHE_READ
+  return (first + rest + shape.output * output) / 1_000_000
 }
 
 function money(n: number): string {
@@ -115,6 +142,33 @@ async function route($: EngineInterface, cfg: Config, task: string): Promise<Pic
   return Promise.race([call, timeout])
 }
 
+type MainConfig = { prices: Prices; downgradeOnly: boolean; cacheTtlMs: number }
+
+// Which model a main turn runs on: Jev's pick when switching to it is expected to cost less than staying on the
+// session's model, counting the cache each one has warm. A long conversation makes a cold switch expensive, so
+// there Jev's pick has to save a lot per turn to win.
+async function chooseMain($: EngineInterface, base: string, m: MainConfig): Promise<{ model: string; detail: string } | undefined> {
+  const pick = await read($, mainPick)
+  if (pick === null || family(pick) === family(base)) return undefined
+  if (m.downgradeOnly && (RANK[family(pick)] ?? 99) >= (RANK[family(base)] ?? 99)) return undefined
+
+  const last = await read($, lastMain)
+  const shape = await read($, turnShape)
+  const now = await $.clock.now()
+  const warm = last !== null && now - last.at < m.cacheTtlMs ? family(last.model) : undefined
+  const context = last?.context ?? 0
+
+  const stay = turnCost(m.prices, base, context, warm === family(base), shape)
+  const go = turnCost(m.prices, pick, context, warm === family(pick), shape)
+  if (stay === undefined || go === undefined) return undefined
+
+  const tokens = `${Math.round(context / 1000)}k tokens of context`
+  if (go < stay * (1 - MARGIN)) {
+    return { model: pick, detail: `switched main to ${family(pick)} · ~${money(stay - go)} cheaper this turn · ${tokens}` }
+  }
+  return { model: base, detail: `kept ${family(base)}: a switch would not pay off · ${tokens}` }
+}
+
 export const register: Register = (on, options) => {
   const key = String(options.apiKey ?? '')
   const minConfidence = Number(options.minConfidence ?? 0.5)
@@ -126,8 +180,48 @@ export const register: Register = (on, options) => {
     standard: String(options.standardModel ?? 'sonnet'),
     hard: String(options.hardModel ?? 'opus'),
   }
+  const switchMain = options.switchMain !== false
+  const main: MainConfig = {
+    prices,
+    downgradeOnly: options.downgradeOnly !== false,
+    cacheTtlMs: Number(options.cacheTtlMinutes ?? 5) * 60_000,
+  }
 
   const usable = (p: Pick | undefined): p is Pick => p !== undefined && p.confidence >= minConfidence
+
+  // Main requests: the turn's first one decides the model, the rest of the turn keeps it so its cache stays warm.
+  on('turn.step', async function* ($, e, next) {
+    if (e.agentId !== undefined) return yield* next(e)
+
+    let model = e.model
+    try {
+      const turn = await read($, mainTurn)
+      if (turn !== null && turn.turnId === e.turnId) {
+        model = turn.model
+        await update($, mainTurn, t => (t === null ? t : { ...t, steps: t.steps + 1 }))
+      } else {
+        const choice = switchMain ? await chooseMain($, e.model, main) : undefined
+        model = choice?.model ?? e.model
+        await update($, mainTurn, () => ({ turnId: e.turnId, model, base: e.model, steps: 1 }))
+        if (choice !== undefined) {
+          const d = await read($, decision)
+          if (d !== null) await update($, decision, () => ({ badge: d.badge, detail: choice.detail }))
+        }
+      }
+    } catch {
+      model = e.model
+    }
+
+    const res = yield* next(model === e.model ? e : { ...e, model })
+
+    const u = res.usage
+    if (u !== null) {
+      const at = await $.clock.now()
+      const context = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens + u.output_tokens
+      await update($, lastMain, () => ({ model: u.model, context, at }))
+    }
+    return res
+  })
 
   // A new prompt starts a new per-prompt tally.
   on('prompt.submit', async ($, e, next) => {
@@ -175,7 +269,7 @@ export const register: Register = (on, options) => {
 
   // When a routed subagent ends, price what it used against what the session's own model would have charged.
   // A routed subagent's tokens are priced at what it ran on against what the session's model would have charged.
-  // A main turn is priced at the session's model against Jev's suggestion; the model is not switched, so that part is an estimate.
+  // A main turn counts only when it was switched: priced at what it ran on against the session's own model.
   on('turn.complete', async ($, e, next) => {
     if (e.usage !== undefined) {
       let diff: number | undefined
@@ -185,10 +279,21 @@ export const register: Register = (on, options) => {
         const would = baseline === undefined ? undefined : cost(prices, baseline, e.usage)
         if (actual !== undefined && would !== undefined) diff = would - actual
       } else {
-        const suggested = await read($, mainPick)
-        const actual = cost(prices, e.usage.model, e.usage)
-        const alt = suggested === null ? undefined : cost(prices, suggested, e.usage)
-        if (actual !== undefined && alt !== undefined) diff = actual - alt
+        const turn = await read($, mainTurn)
+        if (turn !== null && turn.turnId === e.turnId) {
+          const steps = turn.steps
+          const output = e.usage.output_tokens
+          await update($, turnShape, s => ({ steps: s.steps * 0.7 + steps * 0.3, output: s.output * 0.7 + output * 0.3 }))
+          // A switched turn is priced against the session's model with its cache assumed warm, the cheaper case for
+          // staying, so the saving shown is the smaller one.
+          if (family(turn.model) !== family(turn.base)) {
+            const u = e.usage
+            const warm = { ...u, cache_read_input_tokens: u.cache_read_input_tokens + u.cache_creation_input_tokens, cache_creation_input_tokens: 0 }
+            const actual = cost(prices, u.model, u)
+            const would = cost(prices, turn.base, warm)
+            if (actual !== undefined && would !== undefined) diff = would - actual
+          }
+        }
       }
       if (diff !== undefined) {
         const d = diff

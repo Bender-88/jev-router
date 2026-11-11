@@ -1,6 +1,6 @@
 {
   "name": "jev-router",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Bender-88"
   },
@@ -56,6 +56,24 @@
       "title": "Model prices (USD per million tokens)",
       "description": "JSON of [input, output] per model family, used to estimate savings. Estimates only.",
       "default": "{\"haiku\":[1,5],\"sonnet\":[3,15],\"opus\":[5,25]}"
+    },
+    "switchMain": {
+      "type": "boolean",
+      "title": "Switch the main model",
+      "description": "Run each main turn on the model Jev picks, when that is expected to cost less than staying. Off: suggestion only.",
+      "default": true
+    },
+    "downgradeOnly": {
+      "type": "boolean",
+      "title": "Only switch to cheaper models",
+      "description": "Never move the main conversation to a pricier model than the one you chose.",
+      "default": true
+    },
+    "cacheTtlMinutes": {
+      "type": "number",
+      "title": "Prompt cache lifetime (minutes)",
+      "description": "How long a model keeps the conversation cached after its last request. Used to weigh what a switch costs.",
+      "default": 5
     }
   },
   "types": "./types/index.d.ts"
